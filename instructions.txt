@@ -1,0 +1,177 @@
+================================================================
+  ♟  TURNIEJ SZACHOWY — INSTRUKCJA WDROŻENIA Z GITHUB NA VPS
+================================================================
+
+WYMAGANIA
+---------
+- VPS z Ubuntu 22.04 lub 24.04
+- Dostęp root (SSH)
+- Konto GitHub
+
+================================================================
+KROK 1 — UMIEŚĆ KOD NA GITHUB
+================================================================
+
+1. Utwórz nowe repozytorium na https://github.com/new
+   Nazwa np. "chess-tournament"
+   Widoczność: Private (zalecane) lub Public
+
+2. Na swoim komputerze wejdź do katalogu z projektem:
+
+   cd app
+   git init
+   git add .
+   git commit -m "pierwsza wersja"
+   git branch -M main
+   git remote add origin https://github.com/TWOJ_LOGIN/chess-tournament.git
+   git push -u origin main
+
+================================================================
+KROK 2 — ZALOGUJ SIĘ NA VPS I SKLONUJ REPO
+================================================================
+
+ssh root@TWOJ_IP_VPS
+
+   # Zainstaluj git jeśli nie ma:
+   apt-get install -y git
+
+   # Sklonuj repo (prywatne = potrzebujesz tokenu GitHub):
+   git clone https://github.com/TWOJ_LOGIN/chess-tournament.git /root/chess-tournament
+
+   # Jeśli repo prywatne, GitHub zapyta o hasło.
+   # Zamiast hasła wpisz Personal Access Token (PAT):
+   # GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)
+   # Uprawnienie: repo (read)
+
+================================================================
+KROK 3 — URUCHOM INSTALATOR
+================================================================
+
+   cd /root/chess-tournament/scripts
+   bash install.sh
+
+Skrypt automatycznie:
+  ✔ Instaluje PostgreSQL, Python 3, Node.js
+  ✔ Tworzy bazę danych z losowym hasłem
+  ✔ Zakłada tabele
+  ✔ Instaluje backend w virtualenv Pythona
+  ✔ Buduje frontend React (npm run build)
+  ✔ Uruchamia dwie usługi systemd (auto-start po restarcie)
+  ✔ Pyta o e-mail i hasło pierwszego superadmina
+
+Po zakończeniu wyświetla:
+  Frontend:  http://TWOJ_IP:3000
+  API docs:  http://TWOJ_IP:8000/docs
+
+================================================================
+KROK 4 — AKTUALIZACJA KODU (deploy zmian z GitHub)
+================================================================
+
+Gdy wprowadzisz zmiany i wypchniesz je na GitHub:
+
+   git add .
+   git commit -m "opis zmian"
+   git push
+
+Na VPS uruchom update:
+
+   cd /root/chess-tournament
+   git pull
+
+   # Jeśli zmieniłeś backend:
+   source /opt/chess/venv/bin/activate
+   pip install -r backend/requirements.txt   # jeśli dodałeś nowe pakiety
+   cp backend/main.py /opt/chess/backend/main.py
+   systemctl restart chess-backend
+
+   # Jeśli zmieniłeś frontend:
+   cp -r frontend/* /opt/chess/frontend/
+   cd /opt/chess/frontend && npm run build
+   systemctl restart chess-frontend
+
+================================================================
+KROK 5 — ZARZĄDZANIE USŁUGAMI
+================================================================
+
+Sprawdź status:
+   systemctl status chess-backend
+   systemctl status chess-frontend
+
+Logi na żywo:
+   journalctl -u chess-backend  -f
+   journalctl -u chess-frontend -f
+
+Restart:
+   systemctl restart chess-backend
+   systemctl restart chess-frontend
+
+Stop:
+   systemctl stop chess-backend chess-frontend
+
+================================================================
+KROK 6 — DODAWANIE KONT UŻYTKOWNIKÓW
+================================================================
+
+Tylko superadmin może tworzyć konta nauczycieli.
+Najpierw zaloguj się przez aplikację lub API żeby dostać token:
+
+   curl -X POST http://TWOJ_IP:8000/auth/login \
+     -H "Content-Type: application/json" \
+     -d '{"email":"admin@szkola.pl","password":"twoje_haslo"}'
+
+Skopiuj "access_token" z odpowiedzi, następnie:
+
+   curl -X POST http://TWOJ_IP:8000/users \
+     -H "Authorization: Bearer WKLEJONY_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"email":"nauczyciel@szkola.pl","password":"haslo123","role":"teacher"}'
+
+Role:
+  teacher    — dodaje uczestników, generuje pary, wpisuje wyniki
+  superadmin — pełny dostęp + zarządzanie kontami + reset turnieju
+
+================================================================
+OPCJONALNIE — DOMENA I HTTPS (Certbot + Nginx)
+================================================================
+
+1. Skieruj domenę na IP serwera (rekord A w DNS)
+
+2. Zainstaluj Nginx i Certbot:
+   apt-get install -y nginx certbot python3-certbot-nginx
+
+3. Utwórz /etc/nginx/sites-available/chess:
+
+   server {
+       listen 80;
+       server_name twojadomena.pl;
+
+       location /api/ {
+           proxy_pass http://127.0.0.1:8000/;
+           proxy_set_header Host $host;
+       }
+
+       location / {
+           proxy_pass http://127.0.0.1:3000;
+       }
+   }
+
+4. Aktywuj i włącz HTTPS:
+   ln -s /etc/nginx/sites-available/chess /etc/nginx/sites-enabled/
+   nginx -t && systemctl reload nginx
+   certbot --nginx -d twojadomena.pl
+
+5. Zaktualizuj VITE_API_URL w /opt/chess/frontend/.env:
+   VITE_API_URL=https://twojadomena.pl/api
+   Następnie przebuduj frontend:
+   cd /opt/chess/frontend && npm run build
+
+================================================================
+PLIKI KONFIGURACYJNE NA VPS
+================================================================
+
+/opt/chess/backend/.env      — DATABASE_URL i JWT_SECRET (nie commituj!)
+/opt/chess/frontend/.env     — VITE_API_URL
+/opt/chess/frontend/dist/    — zbudowany frontend
+/opt/chess/venv/             — virtualenv Pythona
+
+================================================================

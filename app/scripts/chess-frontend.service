@@ -1,0 +1,14 @@
+[Unit]
+Description=Turniej Szachowy — Frontend Node.js
+After=network.target
+
+[Service]
+User=chess
+WorkingDirectory=/opt/chess/frontend
+Environment=PORT=3000
+ExecStart=/usr/bin/node serve.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
